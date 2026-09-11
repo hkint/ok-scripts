@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         精简版 H5 视频播放器快捷键
+// @name         精简版 H5 视频播放器快捷键增强版
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  精简自用版：只保留快进/退、音量、倍速(带提示)、旋转、逐帧、全屏、截图功能
+// @version      2.0
+// @description  快进/退、音量、倍速、倍速记忆、旋转、逐帧、全屏、截图
 // @match        *://*/*
 // @grant        none
 // @run-at       document-end
@@ -11,169 +11,715 @@
 (function() {
     'use strict';
 
-    // 自动获取当前页面正在播放或面积最大的视频元素
+
+    /***********************
+     * 常量配置
+     ***********************/
+
+    const RATE_STEP = 0.1;
+    const MIN_RATE = 0.1;
+    const MAX_RATE = 16;
+    const DEFAULT_TOGGLE_RATE = 2;
+
+    let lastNonOnePlaybackRate = DEFAULT_TOGGLE_RATE;
+
+
+    /***********************
+     * 获取当前视频
+     *
+     * 优先级：
+     * 1. 鼠标当前悬停视频
+     * 2. 正在播放的视频
+     * 3. 最大面积视频
+     ***********************/
+
     function getActiveVideo() {
-        let videos = Array.from(document.querySelectorAll('video')).filter(v => v.offsetWidth > 0 && v.offsetHeight > 0);
-        if (videos.length === 0) return null;
-        // 优先返回体积最大的视频
-        videos.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
+
+        const videos = Array.from(
+            document.querySelectorAll('video')
+        ).filter(v =>
+            v.offsetWidth > 0 &&
+            v.offsetHeight > 0
+        );
+
+
+        if (videos.length === 0) {
+            return null;
+        }
+
+
+        // 优先鼠标所在 video
+
+        const hoverVideo = videos.find(v => {
+            const rect = v.getBoundingClientRect();
+
+            return (
+                mouseX >= rect.left &&
+                mouseX <= rect.right &&
+                mouseY >= rect.top &&
+                mouseY <= rect.bottom
+            );
+        });
+
+
+        if (hoverVideo) {
+            return hoverVideo;
+        }
+
+
+        // 优先播放中的视频
+
+        const playingVideo = videos.find(v =>
+            !v.paused &&
+            !v.ended &&
+            v.readyState > 2
+        );
+
+
+        if (playingVideo) {
+            return playingVideo;
+        }
+
+
+        // 最后选择最大视频
+
+        videos.sort(
+            (a, b) =>
+                (b.offsetWidth * b.offsetHeight) -
+                (a.offsetWidth * a.offsetHeight)
+        );
+
+
         return videos[0];
     }
 
+
+
+    let mouseX = 0;
+    let mouseY = 0;
+
+
+    document.addEventListener(
+        'mousemove',
+        e => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        },
+        {
+            passive: true
+        }
+    );
+
+
+
+    /***********************
+     * Toast提示
+     ***********************/
+
     let tipTimer = null;
-    // 在屏幕上显示提示信息的轻量级组件
+
+
     function showTip(text) {
-        let tipEl = document.getElementById('h5player-simple-tip');
+
+        let tipEl =
+            document.getElementById(
+                'h5player-simple-tip'
+            );
+
+
         if (!tipEl) {
+
             tipEl = document.createElement('div');
-            tipEl.id = 'h5player-simple-tip';
+
+            tipEl.id =
+                'h5player-simple-tip';
+
+
             tipEl.style.cssText = `
                 position: fixed;
                 top: 15%;
                 left: 50%;
                 transform: translateX(-50%);
-                background: rgba(0, 0, 0, 0.6);
-                color: #fff;
-                padding: 10px 20px;
-                border-radius: 8px;
-                font-size: 18px;
-                font-weight: bold;
-                font-family: sans-serif;
-                z-index: 2147483647;
-                pointer-events: none;
-                transition: opacity 0.3s;
-                opacity: 0;
+                background: rgba(0,0,0,.65);
+                color:white;
+                padding:10px 20px;
+                border-radius:8px;
+                font-size:18px;
+                font-weight:bold;
+                font-family:sans-serif;
+                z-index:2147483647;
+                pointer-events:none;
+                opacity:0;
+                transition:opacity .2s;
             `;
-            // 如果处于全屏状态，优先将提示框挂载到全屏元素下，否则挂载到 body 下
-            const container = document.fullscreenElement || document.body;
-            container.appendChild(tipEl);
-        } else {
-            // 确保在全屏切换时提示框层级正确
-            const container = document.fullscreenElement || document.body;
-            if (tipEl.parentNode !== container) {
-                container.appendChild(tipEl);
-            }
+
+
+            document.body.appendChild(tipEl);
         }
+
 
         tipEl.textContent = text;
+
         tipEl.style.opacity = '1';
 
-        // 每次触发都重置定时器
-        if (tipTimer) clearTimeout(tipTimer);
+
+        if (tipTimer) {
+            clearTimeout(tipTimer);
+        }
+
+
         tipTimer = setTimeout(() => {
+
             tipEl.style.opacity = '0';
-        }, 1500); // 1.5秒后消失
+
+        },1500);
+
     }
 
-    let rotateDeg = 0; // 记录旋转角度
-    let isWebFullscreen = false; // 记录网页全屏状态
-    let originalStyles = new Map(); // 保存视频原样式，用于退出网页全屏
 
-    // 网页全屏切换功能
-    function toggleWebFullscreen(video) {
-        if (!isWebFullscreen) {
-            originalStyles.set(video, video.style.cssText);
-            video.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; z-index: 99999999 !important; object-fit: contain !important;';
-            isWebFullscreen = true;
+
+
+    /***********************
+     * 快捷键过滤
+     ***********************/
+
+
+    function isEditable(el) {
+
+        if (!el) {
+            return false;
+        }
+
+
+        return (
+            el.isContentEditable ||
+            [
+                'INPUT',
+                'TEXTAREA',
+                'SELECT'
+            ].includes(el.tagName)
+        );
+
+    }
+
+
+
+    function shouldHandleShortcut(event) {
+
+
+        // 系统快捷键
+
+        if (
+            event.metaKey ||
+            event.ctrlKey ||
+            event.altKey
+        ) {
+            return false;
+        }
+
+
+        // 中文输入法
+
+        if (event.isComposing) {
+            return false;
+        }
+
+
+        // 输入框
+
+        if (
+            isEditable(event.target)
+        ) {
+            return false;
+        }
+
+
+        return true;
+
+    }
+
+
+
+
+    /***********************
+     * 倍速控制
+     ***********************/
+
+
+    function setPlaybackRate(video, rate) {
+
+
+        rate = Math.max(
+            MIN_RATE,
+            Math.min(
+                MAX_RATE,
+                rate
+            )
+        );
+
+
+        // 修正浮点
+
+        rate =
+            Math.round(rate * 10) / 10;
+
+
+        video.playbackRate = rate;
+
+
+
+        if (rate !== 1) {
+
+            lastNonOnePlaybackRate =
+                rate;
+
+        }
+
+
+        showTip(
+            `当前倍速: ${rate.toFixed(1)}X`
+        );
+
+    }
+
+
+
+
+    function changePlaybackRate(video, delta) {
+
+        setPlaybackRate(
+            video,
+            video.playbackRate + delta
+        );
+
+    }
+
+
+
+
+    function togglePlaybackRate(video) {
+
+
+        if (video.playbackRate === 1) {
+
+
+            setPlaybackRate(
+                video,
+                lastNonOnePlaybackRate ||
+                DEFAULT_TOGGLE_RATE
+            );
+
+
         } else {
-            video.style.cssText = originalStyles.get(video) || '';
-            isWebFullscreen = false;
-        }
-    }
 
-    // 截图功能
-    function takeScreenshot(video) {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataURL = canvas.toDataURL('image/png');
-        
-        const a = document.createElement('a');
-        a.href = dataURL;
-        a.download = `Screenshot_${new Date().getTime()}.png`;
-        a.click();
-        showTip('截图已保存');
-    }
 
-    // 监听键盘事件
-    document.addEventListener('keydown', function(event) {
-        // 如果用户正在输入框中打字，则不触发快捷键
-        const activeTagName = document.activeElement ? document.activeElement.tagName : '';
-        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTagName) || document.activeElement.isContentEditable) {
-            return;
+            lastNonOnePlaybackRate =
+                video.playbackRate;
+
+
+            setPlaybackRate(
+                video,
+                1
+            );
+
         }
 
-        const video = getActiveVideo();
-        if (!video) return;
+    }
 
-        const fpsTime = 1 / 30; // 假设视频为 30 fps 进行微调
-        let handled = false;
 
-        if (event.key === 'ArrowRight') {
-            video.currentTime += event.ctrlKey ? 30 : 5;
-            handled = true;
-        } else if (event.key === 'ArrowLeft') {
-            video.currentTime -= event.ctrlKey ? 30 : 5;
-            handled = true;
-        } else if (event.key === 'ArrowUp') {
-            video.volume = Math.min(1, video.volume + (event.ctrlKey ? 0.2 : 0.05));
-            showTip(`音量: ${Math.round(video.volume * 100)}%`);
-            handled = true;
-        } else if (event.key === 'ArrowDown') {
-            video.volume = Math.max(0, video.volume - (event.ctrlKey ? 0.2 : 0.05));
-            showTip(`音量: ${Math.round(video.volume * 100)}%`);
-            handled = true;
-        } else if (event.key.toLowerCase() === 'c') {
-            // 加速播放，使用 parseFloat 和 toFixed 防止出现无限小数
-            video.playbackRate = parseFloat(Math.min(16, video.playbackRate + 0.1).toFixed(1));
-            showTip(`当前倍速: ${video.playbackRate}X`);
-            handled = true;
-        } else if (event.key.toLowerCase() === 'x') {
-            // 减速播放
-            video.playbackRate = parseFloat(Math.max(0.1, video.playbackRate - 0.1).toFixed(1));
-            showTip(`当前倍速: ${video.playbackRate}X`);
-            handled = true;
-        } else if (event.key.toLowerCase() === 'z') {
-            // 正常速度
-            video.playbackRate = 1;
-            showTip(`当前倍速: 1.0X`);
-            handled = true;
-        } else if (event.key.toLowerCase() === 's' && !event.shiftKey) {
-            rotateDeg += 90;
-            video.style.transform = `rotate(${rotateDeg}deg)`;
-            video.style.transition = 'transform 0.3s';
-            showTip(`画面旋转: ${rotateDeg}度`);
-            handled = true;
-        } else if (event.key.toLowerCase() === 'd') {
-            video.pause();
-            video.currentTime -= fpsTime;
-            handled = true;
-        } else if (event.key.toLowerCase() === 'f') {
-            video.pause();
-            video.currentTime += fpsTime;
-            handled = true;
-        } else if (event.key === 'Enter' && !event.shiftKey) {
-            if (document.fullscreenElement) {
-                document.exitFullscreen();
-            } else {
-                video.requestFullscreen().catch(err => console.log("全屏请求被拒绝"));
+
+
+    /***********************
+     * 旋转/全屏状态
+     ***********************/
+
+
+    let rotateDeg = 0;
+
+    let isWebFullscreen = false;
+
+
+
+    let webFullscreenElement = null;
+    let webFullscreenOldStyle = '';
+
+    function toggleWebFullscreen(video) {
+
+        const container = getFullscreenTarget(video);
+
+
+        if (!isWebFullscreen) {
+
+            webFullscreenElement = container;
+
+            webFullscreenOldStyle =
+                container.style.cssText;
+
+
+            container.style.cssText += `
+            position:fixed!important;
+            top:0!important;
+            left:0!important;
+            width:100vw!important;
+            height:100vh!important;
+            z-index:2147483646!important;
+            background:black!important;
+        `;
+
+
+            document.body.style.overflow = 'hidden';
+
+            isWebFullscreen = true;
+
+
+        } else {
+
+            if (webFullscreenElement) {
+
+                webFullscreenElement.style.cssText =
+                    webFullscreenOldStyle;
+
             }
-            handled = true;
-        } else if (event.key === 'Enter' && event.shiftKey) {
-            toggleWebFullscreen(video);
-            handled = true;
-        } else if (event.key === 'S' && event.shiftKey) {
-            takeScreenshot(video);
-            handled = true;
-        }
 
-        // 仅在实际处理了快捷键时才阻止事件
-        if (handled) {
-            event.preventDefault();
-            event.stopPropagation();
+
+            document.body.style.overflow = '';
+
+            isWebFullscreen = false;
+
         }
-    }, true); 
+    }
+
+
+
+
+    /***********************
+     * 截图
+     ***********************/
+
+
+    function takeScreenshot(video) {
+
+
+        const canvas =
+            document.createElement('canvas');
+
+
+        canvas.width =
+            video.videoWidth;
+
+
+        canvas.height =
+            video.videoHeight;
+
+
+
+        const ctx =
+            canvas.getContext('2d');
+
+
+        ctx.drawImage(
+            video,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+
+
+        const a =
+            document.createElement('a');
+
+
+        a.href =
+            canvas.toDataURL('image/png');
+
+
+        a.download =
+            `Screenshot_${Date.now()}.png`;
+
+
+        a.click();
+
+
+        showTip('截图已保存');
+
+    }
+
+    function getFullscreenTarget(video) {
+
+        // YouTube
+        const yt = video.closest('#movie_player');
+        if (yt) return yt;
+
+        // Bilibili
+        const bili = video.closest('.bpx-player-container');
+        if (bili) return bili;
+
+        // 通用
+        return video.parentElement || video;
+    }
+
+    /***********************
+     * 键盘快捷键
+     ***********************/
+
+    document.addEventListener(
+        'keydown',
+        function(event) {
+
+
+            if (!shouldHandleShortcut(event)) {
+                return;
+            }
+
+
+            const video = getActiveVideo();
+
+
+            if (!video) {
+                return;
+            }
+
+
+
+            const fpsTime = 1 / 30;
+
+            let handled = true;
+
+
+
+            const key =
+                event.key.toLowerCase();
+
+
+
+            /***************
+             * 快进/快退
+             ***************/
+
+            if (event.key === 'ArrowRight') {
+
+
+                video.currentTime +=
+                    event.ctrlKey ? 30 : 5;
+
+
+
+            } else if (event.key === 'ArrowLeft') {
+
+
+                video.currentTime -=
+                    event.ctrlKey ? 30 : 5;
+
+
+
+            /***************
+             * 音量
+             ***************/
+
+            } else if (event.key === 'ArrowUp') {
+
+
+                video.volume =
+                    Math.min(
+                        1,
+                        video.volume +
+                        (event.ctrlKey ? 0.2 : 0.05)
+                    );
+
+
+                showTip(
+                    `音量: ${Math.round(video.volume * 100)}%`
+                );
+
+
+
+            } else if (event.key === 'ArrowDown') {
+
+
+                video.volume =
+                    Math.max(
+                        0,
+                        video.volume -
+                        (event.ctrlKey ? 0.2 : 0.05)
+                    );
+
+
+                showTip(
+                    `音量: ${Math.round(video.volume * 100)}%`
+                );
+
+
+
+            /***************
+             * 倍速
+             *
+             * C +0.1
+             * X -0.1
+             * Z 1x<->上次倍速
+             ***************/
+
+            } else if (key === 'c') {
+
+
+                changePlaybackRate(
+                    video,
+                    RATE_STEP
+                );
+
+
+
+            } else if (key === 'x') {
+
+
+                changePlaybackRate(
+                    video,
+                    -RATE_STEP
+                );
+
+
+
+            } else if (key === 'z') {
+
+
+                togglePlaybackRate(video);
+
+
+
+            /***************
+             * 旋转
+             ***************/
+
+            } else if (
+                key === 's' &&
+                !event.shiftKey
+            ) {
+
+
+                rotateDeg += 90;
+
+
+                video.style.transform =
+                    `rotate(${rotateDeg}deg)`;
+
+
+                video.style.transition =
+                    'transform .3s';
+
+
+                showTip(
+                    `画面旋转: ${rotateDeg}度`
+                );
+
+
+
+            /***************
+             * 逐帧后退
+             ***************/
+
+            } else if (key === 'd') {
+
+
+                video.pause();
+
+                video.currentTime -= fpsTime;
+
+
+
+            /***************
+             * 逐帧前进
+             ***************/
+
+            } else if (key === 'f') {
+
+
+                video.pause();
+
+                video.currentTime += fpsTime;
+
+
+
+            /***************
+             * 原生全屏
+             ***************/
+
+            } else if (
+                event.key === 'Enter' &&
+                !event.shiftKey
+            ) {
+
+
+                if (document.fullscreenElement) {
+
+
+                    document.exitFullscreen();
+
+
+                } else {
+
+
+                    const target = getFullscreenTarget(video);
+
+                    target.requestFullscreen()
+                        .catch(() => {});
+
+
+                }
+
+
+
+            /***************
+             * 网页全屏
+             ***************/
+
+            } else if (
+                event.key === 'Enter' &&
+                event.shiftKey
+            ) {
+
+
+                toggleWebFullscreen(video);
+
+
+
+            /***************
+             ***************/
+
+            } else if (
+                event.key === 'S' &&
+                event.shiftKey
+            ) {
+
+
+                takeScreenshot(video);
+
+
+
+            } else {
+
+
+                handled = false;
+
+            }
+
+
+
+            if (handled) {
+
+
+                event.preventDefault();
+
+                event.stopPropagation();
+
+
+            }
+
+
+        },
+        true
+    );
+
+
 
 })();
