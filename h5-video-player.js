@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         精简版 H5 视频播放器快捷键
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  精简自用版：只保留快进/退、音量、倍速(带提示)、旋转、逐帧、全屏、截图功能
 // @match        *://*/*
 // @grant        none
@@ -73,7 +73,7 @@
     function toggleWebFullscreen(video) {
         if (!isWebFullscreen) {
             originalStyles.set(video, video.style.cssText);
-            video.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; z-index: 99999999 !important; object-fit: contain !important; background: black !important; margin: 0 !important; padding: 0 !important;';
+            video.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; z-index: 99999999 !important; object-fit: contain !important;';
             isWebFullscreen = true;
         } else {
             video.style.cssText = originalStyles.get(video) || '';
@@ -109,55 +109,67 @@
         if (!video) return;
 
         const fpsTime = 1 / 30; // 假设视频为 30 fps 进行微调
-        let handled = true;
+        let handled = false;
 
         if (event.key === 'ArrowRight') {
             video.currentTime += event.ctrlKey ? 30 : 5;
+            handled = true;
         } else if (event.key === 'ArrowLeft') {
             video.currentTime -= event.ctrlKey ? 30 : 5;
+            handled = true;
         } else if (event.key === 'ArrowUp') {
             video.volume = Math.min(1, video.volume + (event.ctrlKey ? 0.2 : 0.05));
             showTip(`音量: ${Math.round(video.volume * 100)}%`);
+            handled = true;
         } else if (event.key === 'ArrowDown') {
             video.volume = Math.max(0, video.volume - (event.ctrlKey ? 0.2 : 0.05));
             showTip(`音量: ${Math.round(video.volume * 100)}%`);
+            handled = true;
         } else if (event.key.toLowerCase() === 'c') {
             // 加速播放，使用 parseFloat 和 toFixed 防止出现无限小数
             video.playbackRate = parseFloat(Math.min(16, video.playbackRate + 0.1).toFixed(1));
             showTip(`当前倍速: ${video.playbackRate}X`);
+            handled = true;
         } else if (event.key.toLowerCase() === 'x') {
             // 减速播放
             video.playbackRate = parseFloat(Math.max(0.1, video.playbackRate - 0.1).toFixed(1));
             showTip(`当前倍速: ${video.playbackRate}X`);
+            handled = true;
         } else if (event.key.toLowerCase() === 'z') {
             // 正常速度
             video.playbackRate = 1;
             showTip(`当前倍速: 1.0X`);
+            handled = true;
         } else if (event.key.toLowerCase() === 's' && !event.shiftKey) {
             rotateDeg += 90;
             video.style.transform = `rotate(${rotateDeg}deg)`;
             video.style.transition = 'transform 0.3s';
             showTip(`画面旋转: ${rotateDeg}度`);
+            handled = true;
         } else if (event.key.toLowerCase() === 'd') {
             video.pause();
             video.currentTime -= fpsTime;
+            handled = true;
         } else if (event.key.toLowerCase() === 'f') {
             video.pause();
             video.currentTime += fpsTime;
+            handled = true;
         } else if (event.key === 'Enter' && !event.shiftKey) {
             if (document.fullscreenElement) {
                 document.exitFullscreen();
             } else {
                 video.requestFullscreen().catch(err => console.log("全屏请求被拒绝"));
             }
+            handled = true;
         } else if (event.key === 'Enter' && event.shiftKey) {
             toggleWebFullscreen(video);
+            handled = true;
         } else if (event.key === 'S' && event.shiftKey) {
             takeScreenshot(video);
-        } else {
-            handled = false; // 未按定义快捷键
+            handled = true;
         }
 
+        // 仅在实际处理了快捷键时才阻止事件
         if (handled) {
             event.preventDefault();
             event.stopPropagation();
