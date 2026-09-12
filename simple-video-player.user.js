@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         精简版视频播放器快捷键
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  快进/退、音量、倍速、倍速记忆持久化、旋转、逐帧、全屏、截图
 // @match        *://*/*
 // @grant        none
@@ -95,7 +95,6 @@
 
         if (videos.length === 0) return null;
 
-        // 1. 优先鼠标悬停视频
         const hoverVideo = videos.find(v => {
             const rect = v.getBoundingClientRect();
             return (
@@ -107,7 +106,6 @@
         });
         if (hoverVideo) return hoverVideo;
 
-        // 2. 优先正在播放的视频
         const playingVideo = videos.find(v =>
             !v.paused &&
             !v.ended &&
@@ -115,7 +113,6 @@
         );
         if (playingVideo) return playingVideo;
 
-        // 3. 面积最大视频
         videos.sort(
             (a, b) =>
                 (b.offsetWidth * b.offsetHeight) -
@@ -142,7 +139,7 @@
                 top: 15%;
                 left: 50%;
                 transform: translateX(-50%);
-                background: rgba(0,0,0,.75);
+                background: rgba(0,0,0,.85);
                 color: #fff;
                 padding: 10px 20px;
                 border-radius: 8px;
@@ -224,7 +221,18 @@
      ***********************/
 
     let isWebFullscreen = false;
-    let webFullscreenVideo = null;
+    let webFullscreenTarget = null;
+
+    // 寻找最佳的全屏容器
+    function getFullscreenContainer(video) {
+        const yt = video.closest('#movie_player');
+        if (yt) return yt;
+
+        const bili = video.closest('.bpx-player-container');
+        if (bili) return bili;
+
+        return video.parentElement || video;
+    }
 
     // 原生全屏
     function toggleNativeFullscreen(video) {
@@ -237,15 +245,17 @@
         if (document.fullscreenElement) {
             document.exitFullscreen().catch(() => {});
         } else {
-            const target = video.parentElement || video;
+            const target = getFullscreenContainer(video);
             target.requestFullscreen().catch(() => {});
         }
     }
 
-    // 网页全屏 (对 video 节点覆盖样式，彻底挡住 YouTube 杂项)
+    // 网页全屏 (修复包含 CSS contain 限制的网站)
     function toggleWebFullscreen(video) {
+        const target = getFullscreenContainer(video);
+
         if (!isWebFullscreen) {
-            webFullscreenVideo = video;
+            webFullscreenTarget = target;
 
             let styleEl = document.getElementById('h5player-webfs-style');
             if (!styleEl) {
@@ -263,22 +273,28 @@
                     height: 100vh !important;
                     max-width: none !important;
                     max-height: none !important;
-                    object-fit: contain !important;
                     z-index: 2147483647 !important;
                     background: #000 !important;
+                    transform: none !important;
+                    contain: none !important;
+                }
+                .h5player-web-fullscreen-active video {
+                    width: 100% !important;
+                    height: 100% !important;
+                    object-fit: contain !important;
                 }
                 body.h5player-webfs-body-active {
                     overflow: hidden !important;
                 }
             `;
 
-            video.classList.add('h5player-web-fullscreen-active');
+            target.classList.add('h5player-web-fullscreen-active');
             document.body.classList.add('h5player-webfs-body-active');
             isWebFullscreen = true;
             showTip('已开启网页全屏');
         } else {
-            if (webFullscreenVideo) {
-                webFullscreenVideo.classList.remove('h5player-web-fullscreen-active');
+            if (webFullscreenTarget) {
+                webFullscreenTarget.classList.remove('h5player-web-fullscreen-active');
             }
             document.body.classList.remove('h5player-webfs-body-active');
             isWebFullscreen = false;
@@ -322,10 +338,20 @@
 
             const fpsTime = 1 / 30;
             let handled = true;
-            const key = event.key.toLowerCase();
+
+            const isEnter = event.key === 'Enter' || event.keyCode === 13;
+            const isShift = event.shiftKey;
+
+            // 优先匹配网页全屏 (Shift + Enter)
+            if (isEnter && isShift) {
+                toggleWebFullscreen(video);
+
+            // 原生全屏 (单独 Enter)
+            } else if (isEnter && !isShift) {
+                toggleNativeFullscreen(video);
 
             // 快进/快退
-            if (event.key === 'ArrowRight') {
+            } else if (event.key === 'ArrowRight') {
                 video.currentTime += event.ctrlKey ? 30 : 5;
             } else if (event.key === 'ArrowLeft') {
                 video.currentTime -= event.ctrlKey ? 30 : 5;
@@ -339,38 +365,30 @@
                 showTip(`音量: ${Math.round(video.volume * 100)}%`);
 
             // 倍速
-            } else if (key === 'c') {
+            } else if (event.key.toLowerCase() === 'c') {
                 changePlaybackRate(video, RATE_STEP);
-            } else if (key === 'x') {
+            } else if (event.key.toLowerCase() === 'x') {
                 changePlaybackRate(video, -RATE_STEP);
-            } else if (key === 'z') {
+            } else if (event.key.toLowerCase() === 'z') {
                 togglePlaybackRate(video);
 
             // 旋转
-            } else if (key === 's' && !event.shiftKey) {
+            } else if (event.key.toLowerCase() === 's' && !isShift) {
                 rotateDeg += 90;
                 video.style.transform = `rotate(${rotateDeg}deg)`;
                 video.style.transition = 'transform .3s';
                 showTip(`画面旋转: ${rotateDeg}度`);
 
             // 逐帧
-            } else if (key === 'd') {
+            } else if (event.key.toLowerCase() === 'd') {
                 video.pause();
                 video.currentTime -= fpsTime;
-            } else if (key === 'f') {
+            } else if (event.key.toLowerCase() === 'f') {
                 video.pause();
                 video.currentTime += fpsTime;
 
-            // 网页全屏 (Shift + Enter) - 须置于 Enter 之前优先判断
-            } else if (event.key === 'Enter' && event.shiftKey) {
-                toggleWebFullscreen(video);
-
-            // 原生全屏 (Enter)
-            } else if (event.key === 'Enter' && !event.shiftKey) {
-                toggleNativeFullscreen(video);
-
             // 截图 (Shift + S)
-            } else if (event.key === 'S' && event.shiftKey) {
+            } else if ((event.key === 'S' || event.key === 's') && isShift) {
                 takeScreenshot(video);
             } else {
                 handled = false;
