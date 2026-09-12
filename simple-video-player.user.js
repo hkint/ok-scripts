@@ -1,11 +1,13 @@
 // ==UserScript==
-// @name         精简版 H5 视频播放器快捷键增强版 (含倍速记忆)
+// @name         精简版视频播放器快捷键
 // @namespace    http://tampermonkey.net/
 // @version      2.1
 // @description  快进/退、音量、倍速、倍速记忆持久化、旋转、逐帧、全屏、截图
 // @match        *://*/*
 // @grant        none
 // @run-at       document-end
+// @updateURL    https://raw.githubusercontent.com/hkint/ok-scripts/main/simple-video-player.user.js
+// @downloadURL  https://raw.githubusercontent.com/hkint/ok-scripts/main/simple-video-player.user.js
 // ==/UserScript==
 
 (function() {
