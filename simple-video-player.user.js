@@ -244,11 +244,7 @@
         }
     }
 
-    /***********************
-     * 旋转/全屏状态
-     ***********************/
 
-    let rotateDeg = 0;
     
     /***********************
      * 网页全屏状态
@@ -328,6 +324,36 @@
     }
 
     /***********************
+     * 原生全屏逻辑优化
+     ***********************/
+
+    function toggleNativeFullscreen(video) {
+        // 优先使用 YouTube 原生播放器 API，确保 UI 状态完全同步
+        const ytPlayer = document.getElementById('movie_player');
+        if (ytPlayer && typeof ytPlayer.toggleFullscreen === 'function') {
+            ytPlayer.toggleFullscreen();
+            return;
+        }
+
+        // 其它通用网站的退/进全屏逻辑
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        } else {
+            const target = getFullscreenTarget(video);
+            target.requestFullscreen().catch(() => {});
+        }
+    }
+
+    // 监听原生全屏状态变化，确保按 Esc 或点击 UI 按钮时状态同步
+    document.addEventListener('fullscreenchange', () => {
+        // 如果退出了原生全屏，可以在这里处理相关状态重置
+        if (!document.fullscreenElement) {
+            showTip('已退出全屏');
+        }
+    });
+
+    let rotateDeg = 0;
+    /***********************
      * 键盘快捷键监听
      ***********************/
 
@@ -380,17 +406,19 @@
                 video.pause();
                 video.currentTime += fpsTime;
 
-            // 原生全屏
+            /***************
+             * 原生全屏 (Enter)
+             ***************/
             } else if (event.key === 'Enter' && !event.shiftKey) {
-                if (document.fullscreenElement) {
-                    document.exitFullscreen();
-                } else {
-                    const target = getFullscreenTarget(video);
-                    target.requestFullscreen().catch(() => {});
-                }
 
-            // 网页全屏
+                toggleNativeFullscreen(video);
+                // 不阻断事件传播，让 YouTube 原生 UI 正常响应状态更新
+
+            /***************
+             * 网页全屏 (Shift + Enter)
+             ***************/
             } else if (event.key === 'Enter' && event.shiftKey) {
+
                 toggleWebFullscreen(video);
 
             // 截图
