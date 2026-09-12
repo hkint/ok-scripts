@@ -23,13 +23,11 @@
     const DEFAULT_TOGGLE_RATE = 2;
     const STORAGE_KEY = 'h5player_saved_playback_rate';
 
-    // 从 localStorage 获取已保存的倍速，若没有则默认为 1
     function getSavedRate() {
         const saved = localStorage.getItem(STORAGE_KEY);
         return saved ? parseFloat(saved) : 1;
     }
 
-    // 保存倍速到 localStorage
     function saveRate(rate) {
         localStorage.setItem(STORAGE_KEY, rate.toString());
     }
@@ -41,11 +39,8 @@
      * 倍速自动应用与监听机制
      ***********************/
 
-    // 为单个视频应用倍速并绑定重置防御
     function applySavedRateToVideo(video) {
         if (!video || video.dataset.rateMemoryAttached) return;
-
-        // 标记已绑定，避免重复绑定
         video.dataset.rateMemoryAttached = 'true';
 
         const applyRate = () => {
@@ -55,20 +50,15 @@
             }
         };
 
-        // 初始尝试设置一次
         applyRate();
-
-        // 当视频元数据加载完成或开始播放时，再次强制设置（防御部分网站自动重置为1.0）
         video.addEventListener('loadeddata', applyRate);
         video.addEventListener('play', applyRate);
     }
 
-    // 全局扫描并应用倍速
     function applyRateToAllVideos() {
         document.querySelectorAll('video').forEach(applySavedRateToVideo);
     }
 
-    // 监听 DOM 动态加载（适配单页面应用如 B站、YouTube 切换视频）
     const observer = new MutationObserver(() => {
         applyRateToAllVideos();
     });
@@ -77,61 +67,11 @@
         subtree: true
     });
 
-    // 页面加载完成后立即执行一次
     applyRateToAllVideos();
 
     /***********************
      * 获取当前视频
-     *
-     * 优先级：
-     * 1. 鼠标当前悬停视频
-     * 2. 正在播放的视频
-     * 3. 最大面积视频
      ***********************/
-
-    function getActiveVideo() {
-        const videos = Array.from(
-            document.querySelectorAll('video')
-        ).filter(v =>
-            v.offsetWidth > 0 &&
-            v.offsetHeight > 0
-        );
-
-        if (videos.length === 0) {
-            return null;
-        }
-
-        // 优先鼠标所在 video
-        const hoverVideo = videos.find(v => {
-            const rect = v.getBoundingClientRect();
-            return (
-                mouseX >= rect.left &&
-                mouseX <= rect.right &&
-                mouseY >= rect.top &&
-                mouseY <= rect.bottom
-            );
-        });
-
-        if (hoverVideo) return hoverVideo;
-
-        // 优先播放中的视频
-        const playingVideo = videos.find(v =>
-            !v.paused &&
-            !v.ended &&
-            v.readyState > 2
-        );
-
-        if (playingVideo) return playingVideo;
-
-        // 最后选择最大视频
-        videos.sort(
-            (a, b) =>
-                (b.offsetWidth * b.offsetHeight) -
-                (a.offsetWidth * a.offsetHeight)
-        );
-
-        return videos[0];
-    }
 
     let mouseX = 0;
     let mouseY = 0;
@@ -145,8 +85,48 @@
         { passive: true }
     );
 
+    function getActiveVideo() {
+        const videos = Array.from(
+            document.querySelectorAll('video')
+        ).filter(v =>
+            v.offsetWidth > 0 &&
+            v.offsetHeight > 0
+        );
+
+        if (videos.length === 0) return null;
+
+        // 1. 优先鼠标悬停视频
+        const hoverVideo = videos.find(v => {
+            const rect = v.getBoundingClientRect();
+            return (
+                mouseX >= rect.left &&
+                mouseX <= rect.right &&
+                mouseY >= rect.top &&
+                mouseY <= rect.bottom
+            );
+        });
+        if (hoverVideo) return hoverVideo;
+
+        // 2. 优先正在播放的视频
+        const playingVideo = videos.find(v =>
+            !v.paused &&
+            !v.ended &&
+            v.readyState > 2
+        );
+        if (playingVideo) return playingVideo;
+
+        // 3. 面积最大视频
+        videos.sort(
+            (a, b) =>
+                (b.offsetWidth * b.offsetHeight) -
+                (a.offsetWidth * a.offsetHeight)
+        );
+
+        return videos[0];
+    }
+
     /***********************
-     * Toast提示
+     * Toast 提示框
      ***********************/
 
     let tipTimer = null;
@@ -162,8 +142,8 @@
                 top: 15%;
                 left: 50%;
                 transform: translateX(-50%);
-                background: rgba(0,0,0,.65);
-                color: white;
+                background: rgba(0,0,0,.75);
+                color: #fff;
                 padding: 10px 20px;
                 border-radius: 8px;
                 font-size: 18px;
@@ -180,17 +160,14 @@
         tipEl.textContent = text;
         tipEl.style.opacity = '1';
 
-        if (tipTimer) {
-            clearTimeout(tipTimer);
-        }
-
+        if (tipTimer) clearTimeout(tipTimer);
         tipTimer = setTimeout(() => {
             tipEl.style.opacity = '0';
         }, 1500);
     }
 
     /***********************
-     * 快捷键过滤
+     * 快捷键过滤机制
      ***********************/
 
     function isEditable(el) {
@@ -209,16 +186,14 @@
     }
 
     /***********************
-     * 倍速控制逻辑（包含写入存储）
+     * 倍速控制
      ***********************/
 
     function setPlaybackRate(video, rate) {
         rate = Math.max(MIN_RATE, Math.min(MAX_RATE, rate));
-        rate = Math.round(rate * 10) / 10; // 修正浮点精度
+        rate = Math.round(rate * 10) / 10;
 
         video.playbackRate = rate;
-
-        // 保存倍速到全局存储
         saveRate(rate);
 
         if (rate !== 1) {
@@ -244,20 +219,34 @@
         }
     }
 
-
-    
     /***********************
-     * 网页全屏状态
+     * 全屏逻辑 (原生 & 网页)
      ***********************/
 
     let isWebFullscreen = false;
     let webFullscreenVideo = null;
 
+    // 原生全屏
+    function toggleNativeFullscreen(video) {
+        const ytPlayer = document.getElementById('movie_player');
+        if (ytPlayer && typeof ytPlayer.toggleFullscreen === 'function') {
+            ytPlayer.toggleFullscreen();
+            return;
+        }
+
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {});
+        } else {
+            const target = video.parentElement || video;
+            target.requestFullscreen().catch(() => {});
+        }
+    }
+
+    // 网页全屏 (对 video 节点覆盖样式，彻底挡住 YouTube 杂项)
     function toggleWebFullscreen(video) {
         if (!isWebFullscreen) {
             webFullscreenVideo = video;
 
-            // 动态注入样式，确保层级绝对最高，遮罩所有 YouTube 底部/侧边元素
             let styleEl = document.getElementById('h5player-webfs-style');
             if (!styleEl) {
                 styleEl = document.createElement('style');
@@ -287,7 +276,6 @@
             document.body.classList.add('h5player-webfs-body-active');
             isWebFullscreen = true;
             showTip('已开启网页全屏');
-
         } else {
             if (webFullscreenVideo) {
                 webFullscreenVideo.classList.remove('h5player-web-fullscreen-active');
@@ -299,7 +287,7 @@
     }
 
     /***********************
-     * 截图与辅助函数
+     * 截图
      ***********************/
 
     function takeScreenshot(video) {
@@ -318,44 +306,11 @@
         showTip('截图已保存');
     }
 
-    function getFullscreenTarget(video) {
-        // YouTube 和绝大多数网站直接对 video 标签本身做伪全屏效果最好
-        return video;
-    }
-
     /***********************
-     * 原生全屏逻辑优化
+     * 键盘响应事件
      ***********************/
-
-    function toggleNativeFullscreen(video) {
-        // 优先使用 YouTube 原生播放器 API，确保 UI 状态完全同步
-        const ytPlayer = document.getElementById('movie_player');
-        if (ytPlayer && typeof ytPlayer.toggleFullscreen === 'function') {
-            ytPlayer.toggleFullscreen();
-            return;
-        }
-
-        // 其它通用网站的退/进全屏逻辑
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {});
-        } else {
-            const target = getFullscreenTarget(video);
-            target.requestFullscreen().catch(() => {});
-        }
-    }
-
-    // 监听原生全屏状态变化，确保按 Esc 或点击 UI 按钮时状态同步
-    document.addEventListener('fullscreenchange', () => {
-        // 如果退出了原生全屏，可以在这里处理相关状态重置
-        if (!document.fullscreenElement) {
-            showTip('已退出全屏');
-        }
-    });
 
     let rotateDeg = 0;
-    /***********************
-     * 键盘快捷键监听
-     ***********************/
 
     document.addEventListener(
         'keydown',
@@ -375,7 +330,7 @@
             } else if (event.key === 'ArrowLeft') {
                 video.currentTime -= event.ctrlKey ? 30 : 5;
 
-            // 音量控制
+            // 音量
             } else if (event.key === 'ArrowUp') {
                 video.volume = Math.min(1, video.volume + (event.ctrlKey ? 0.2 : 0.05));
                 showTip(`音量: ${Math.round(video.volume * 100)}%`);
@@ -383,7 +338,7 @@
                 video.volume = Math.max(0, video.volume - (event.ctrlKey ? 0.2 : 0.05));
                 showTip(`音量: ${Math.round(video.volume * 100)}%`);
 
-            // 倍速控制
+            // 倍速
             } else if (key === 'c') {
                 changePlaybackRate(video, RATE_STEP);
             } else if (key === 'x') {
@@ -398,7 +353,7 @@
                 video.style.transition = 'transform .3s';
                 showTip(`画面旋转: ${rotateDeg}度`);
 
-            // 逐帧控制
+            // 逐帧
             } else if (key === 'd') {
                 video.pause();
                 video.currentTime -= fpsTime;
@@ -406,22 +361,15 @@
                 video.pause();
                 video.currentTime += fpsTime;
 
-            /***************
-             * 原生全屏 (Enter)
-             ***************/
-            } else if (event.key === 'Enter' && !event.shiftKey) {
-
-                toggleNativeFullscreen(video);
-                // 不阻断事件传播，让 YouTube 原生 UI 正常响应状态更新
-
-            /***************
-             * 网页全屏 (Shift + Enter)
-             ***************/
+            // 网页全屏 (Shift + Enter) - 须置于 Enter 之前优先判断
             } else if (event.key === 'Enter' && event.shiftKey) {
-
                 toggleWebFullscreen(video);
 
-            // 截图
+            // 原生全屏 (Enter)
+            } else if (event.key === 'Enter' && !event.shiftKey) {
+                toggleNativeFullscreen(video);
+
+            // 截图 (Shift + S)
             } else if (event.key === 'S' && event.shiftKey) {
                 takeScreenshot(video);
             } else {
