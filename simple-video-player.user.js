@@ -249,33 +249,56 @@
      ***********************/
 
     let rotateDeg = 0;
+    
+    /***********************
+     * 网页全屏状态
+     ***********************/
+
     let isWebFullscreen = false;
-    let webFullscreenElement = null;
-    let webFullscreenOldStyle = '';
+    let webFullscreenVideo = null;
 
     function toggleWebFullscreen(video) {
-        const container = getFullscreenTarget(video);
-
         if (!isWebFullscreen) {
-            webFullscreenElement = container;
-            webFullscreenOldStyle = container.style.cssText;
-            container.style.cssText += `
-                position:fixed!important;
-                top:0!important;
-                left:0!important;
-                width:100vw!important;
-                height:100vh!important;
-                z-index:2147483646!important;
-                background:black!important;
-            `;
-            document.body.style.overflow = 'hidden';
-            isWebFullscreen = true;
-        } else {
-            if (webFullscreenElement) {
-                webFullscreenElement.style.cssText = webFullscreenOldStyle;
+            webFullscreenVideo = video;
+
+            // 动态注入样式，确保层级绝对最高，遮罩所有 YouTube 底部/侧边元素
+            let styleEl = document.getElementById('h5player-webfs-style');
+            if (!styleEl) {
+                styleEl = document.createElement('style');
+                styleEl.id = 'h5player-webfs-style';
+                document.head.appendChild(styleEl);
             }
-            document.body.style.overflow = '';
+
+            styleEl.innerHTML = `
+                .h5player-web-fullscreen-active {
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: none !important;
+                    max-height: none !important;
+                    object-fit: contain !important;
+                    z-index: 2147483647 !important;
+                    background: #000 !important;
+                }
+                body.h5player-webfs-body-active {
+                    overflow: hidden !important;
+                }
+            `;
+
+            video.classList.add('h5player-web-fullscreen-active');
+            document.body.classList.add('h5player-webfs-body-active');
+            isWebFullscreen = true;
+            showTip('已开启网页全屏');
+
+        } else {
+            if (webFullscreenVideo) {
+                webFullscreenVideo.classList.remove('h5player-web-fullscreen-active');
+            }
+            document.body.classList.remove('h5player-webfs-body-active');
             isWebFullscreen = false;
+            showTip('已退出网页全屏');
         }
     }
 
@@ -300,13 +323,8 @@
     }
 
     function getFullscreenTarget(video) {
-        const yt = video.closest('#movie_player');
-        if (yt) return yt;
-
-        const bili = video.closest('.bpx-player-container');
-        if (bili) return bili;
-
-        return video.parentElement || video;
+        // YouTube 和绝大多数网站直接对 video 标签本身做伪全屏效果最好
+        return video;
     }
 
     /***********************
